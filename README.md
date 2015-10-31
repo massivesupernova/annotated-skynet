@@ -1,2 +1,3 @@
-# annotated-skynet
-Annotated edition of skynet framework.
+# skynet
+- https://github.com/cloudwu/skynet
+- http://forthxu.com/blog/skynet.html
