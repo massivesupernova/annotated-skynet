@@ -84,6 +84,17 @@ int sigign() {
 	return 0;
 }
 
+/**
+the string of load_config is a lua chunk.
+lua chunk will be handled as an anonymous vararg function.
+1. config_name get config file name from vararg
+2. open config file through config_name
+3. read entrie file content as lua code
+4. define a function to get os envrionment variable's value
+5. repalce existing envrionment variable to its value in read code,
+   envrionment variable pattern `%$([%w_%d]+)`: start with `$` and follow one or more letter/underscore/digit
+6. close file, define result table, get result and return
+ */
 static const char * load_config = "\
 	local config_name = ...\
 	local f = assert(io.open(config_name))\
