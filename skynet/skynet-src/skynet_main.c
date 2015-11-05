@@ -77,6 +77,9 @@ _init_env(lua_State *L) {
 	lua_pop(L,1);
 }
 
+// set SIGPIPE signal's handler function to SIG_IGN (ignore this signal)
+// background story: if a socket is closed by client, then call write twice to this socket on server, 
+// the second call will generate SIGPIPE signal, this signal terminate process by default
 int sigign() {
 	struct sigaction sa;
 	sa.sa_handler = SIG_IGN;
@@ -84,16 +87,37 @@ int sigign() {
 	return 0;
 }
 
-/**
+/**[Load Config]
 the string of load_config is a lua chunk.
 lua chunk will be handled as an anonymous vararg function.
+
+this lua chunk executes following actions:
 1. config_name get config file name from vararg
 2. open config file through config_name
 3. read entrie file content as lua code
 4. define a function to get os envrionment variable's value
-5. repalce existing envrionment variable to its value in read code,
-   envrionment variable pattern `%$([%w_%d]+)`: start with `$` and follow one or more letter/underscore/digit
-6. close file, define result table, get result and return
+5. repalce existing envrionment variable to its value in code
+   the envrionment variable pattern `%$([%w_%d]+)`: 
+   start with `$` and follow one or more letter/underscore/digit
+6. close file and define a `result` table
+7. load the code that originally from config file, and return a compiled anonymous function
+8. the `result` table is passed to intianlize the first upvalue in this anonymous function
+9. execute this anonymous function with no arguments (assert will return all its arguments when assert true)
+
+code = string.gsub(code, "%$([%w_%d]+)", getenv):
+1. each match "%$([%w_%d]+)" in code, the function getenv will be called a time
+2. each time the parameter passed into getenv is the string match "[%w_%d]+", i.e. the pattern in the parentheses
+3. if getenv return not false and nil, the return string will be used to replace original matched string in code
+4. finally, gsub return entire modified string
+
+assert(load(code, "=(load)", "t", result))():
+1. load the chunk in code that originally from config file
+2. the "=(load)" is the name of the chunk for debug and error handling
+3. the "t" says that the code in chunk is plain text not precompiled binary code
+4. the `result` is used to initialise the first upvalue in the chunk, 
+   if this chunk has more upvalues then these extra upvalues will be initialized to 'nil`.
+5. finally the chunk is loaded and return a compiled anonymous function
+6. then the anonymous function is called with no arguments.
  */
 static const char * load_config = "\
 	local config_name = ...\
@@ -107,8 +131,31 @@ static const char * load_config = "\
 	return result\
 ";
 
+/**[Example Config File]
+************************
+root = "./"
+thread = 8
+logger = nil
+logpath = "."
+harbor = 1
+address = "127.0.0.1:2526"
+master = "127.0.0.1:2013"
+start = "main"  -- main script
+bootstrap = "snlua bootstrap" -- The service for bootstrap
+standalone = "0.0.0.0:2013"
+luaservice = root.."service/?.lua;"..root.."test/?.lua;"..root.."examples/?.lua"
+lualoader = "lualib/loader.lua"
+-- preload = "./examples/preload.lua" -- run preload.lua before every lua service run
+snax = root.."examples/?.lua;"..root.."test/?.lua"
+-- snax_interface_g = "snax_g"
+cpath = root.."cservice/?.so"
+-- daemon = "./skynet.pid"
+************************
+ */
+
 int
 main(int argc, char *argv[]) {
+  // get config file name string from argv[1]
 	const char * config_file = NULL ;
 	if (argc > 1) {
 		config_file = argv[1];
@@ -117,11 +164,21 @@ main(int argc, char *argv[]) {
 			"usage: skynet configfilename\n");
 		return 1;
 	}
-
+  
+  // only useful for modified version of lua, check ENABLE_SHORT_STRING_TABLE
 	luaS_initshr();
+  
+  // defined in skynet_server.c 
+  // 1. init the global skynet node of G_NODE 
+  // 2. set current thread's specific data to THREAD_MAIN
 	skynet_globalinit();
+
+  // defined in skynet_env.c
+  // 1. alloc the global skynet_env of E and initialize it
+  // 2. E has a spinlock and a lua state
 	skynet_env_init();
 
+  // defined in this file: ignore SIGPIPE signal
 	sigign();
 
 	struct skynet_config config;
@@ -152,7 +209,12 @@ main(int argc, char *argv[]) {
 	lua_close(L);
 
 	skynet_start(&config);
+
+  // definded in skynet_server.c: 
+  // delete created thread specific data key stored in G_NODE.handle_key
 	skynet_globalexit();
+
+  // only useful for modified version of lua, check ENABLE_SHORT_STRING_TABLE
 	luaS_exitshr();
 
 	return 0;

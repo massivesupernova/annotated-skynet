@@ -46,7 +46,9 @@ skynet_setenv(const char *key, const char *value) {
 
 void
 skynet_env_init() {
-	E = skynet_malloc(sizeof(*E));
-	SPIN_INIT(E)
-	E->L = luaL_newstate();
+  // alloc the global skynet_env of E and initialize it
+  // E has two fields: a spinlock and a lus state
+	E = skynet_malloc(sizeof(*E)); // alloc the structure
+	SPIN_INIT(E)                   // init spinlock
+	E->L = luaL_newstate();        // new a lua state
 }

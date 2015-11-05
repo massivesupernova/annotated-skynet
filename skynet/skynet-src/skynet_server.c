@@ -765,14 +765,35 @@ skynet_context_send(struct skynet_context * ctx, void * msg, size_t sz, uint32_t
 
 void 
 skynet_globalinit(void) {
-	G_NODE.total = 0;
-	G_NODE.monitor_exit = 0;
-	G_NODE.init = 1;
+  // initialise the global skynet_node of G_NODE
+  // G_NODE has 4 fileds initialized as below
+	G_NODE.total = 0;         // todo
+	G_NODE.monitor_exit = 0;  // todo
+	G_NODE.init = 1;          // initialized or not
+
+  /**[pthread_key_create](http://linux.die.net/man/3/pthread_key_create)
+  int pthread_key_create(pthread_key_t* key, void (*dtor)(void*)):
+  1. this function is defined in pthread.h
+  2. it creates a thread-specific data key visible to all threads in the process
+  3. "thread specific data" is data all threads can access but each thread has its own copy
+  4. the thread-specific data key is the identify key used to locate the data
+  5. a destroy function can be set to do clear work at thread exit
+  6. can use `int pthread_setspecific(pthread_key_t key, const void* value)` to set specific data
+  7. can use `void* pthread_getspecific(pthread_key_t key)` to get specific data 
+
+  pthread_key_create(&G_NODE.handle_key, NULL):
+  1. create the thread-specific data key and store it to G_NODE.handle_key
+  2. and without a destory function
+  3. G_NODE.handle_key is global variable, only have one copy in the process
+  4. each thread will access the same handle_key, but each thread can access its own copy of specific data using this key 
+   */
 	if (pthread_key_create(&G_NODE.handle_key, NULL)) {
 		fprintf(stderr, "pthread_key_create failed");
 		exit(1);
 	}
-	// set mainthread's key
+  
+	// set current thread's specific data to THREAD_MAIN using `pthread_setspecific`
+	// check its definition below at end of the file
 	skynet_initthread(THREAD_MAIN);
 }
 
