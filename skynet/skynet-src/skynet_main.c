@@ -66,7 +66,7 @@ _init_env(lua_State *L) {
   // int lua_next (lua_State *L, int idx):
   // 1. `idx` (-2) is the index of the table in the stack
   // 2. pop up the top element (nil for 1st time or the key of table) in the stack
-  // 3. and then push a key and value pair of the table into the stack (if the table traverse finished and loop end)
+  // 3. and then push a key and value pair of the table into the stack (if the table traverse finished then end loop)
   while (lua_next(L, -2) != 0) {
 
     // ----------------------------------------- Index
