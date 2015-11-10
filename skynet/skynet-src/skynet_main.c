@@ -14,7 +14,11 @@
 #include <signal.h>
 #include <assert.h>
 
-static int
+// optint, optstring:
+// 1. if skynet environment has this key then return the related value
+// 2. otherwise return the given `opt` instead
+
+static int 
 optint(const char *key, int opt) {
 	const char * str = skynet_getenv(key);
 	if (str == NULL) {
@@ -53,14 +57,33 @@ optstring(const char *key,const char * opt) {
 
 static void
 _init_env(lua_State *L) {
+
+  // ----------------------------------------- Index
+  // b. and a nil value pushed on the stack     (-1)
+  // a. first the result table is on the stack  (-2)
 	lua_pushnil(L);  /* first key */
-	while (lua_next(L, -2) != 0) {
-		int keyt = lua_type(L, -2);
+
+  // int lua_next (lua_State *L, int idx):
+  // 1. `idx` (-2) is the index of the table in the stack
+  // 2. pop up the top element (nil for 1st time or the key of table) in the stack
+  // 3. and then push a key and value pair of the table into the stack (if the table traverse finished and loop end)
+  while (lua_next(L, -2) != 0) {
+
+    // ----------------------------------------- Index
+    // c. the value                               (-1)
+    // b. the key                                 (-2)
+    // a. first the result table is on the stack  (-3)
+    int keyt = lua_type(L, -2); // get key type
 		if (keyt != LUA_TSTRING) {
 			fprintf(stderr, "Invalid config table\n");
 			exit(1);
 		}
+
+    // get the config name string
 		const char * key = lua_tostring(L,-2);
+
+    // get the value of this config name
+    // and set this config to skynet environment
 		if (lua_type(L,-1) == LUA_TBOOLEAN) {
 			int b = lua_toboolean(L,-1);
 			skynet_setenv(key,b ? "true" : "false" );
@@ -70,11 +93,26 @@ _init_env(lua_State *L) {
 				fprintf(stderr, "Invalid config table key = %s\n", key);
 				exit(1);
 			}
+
+      // defined in skynet_env.c
+      // 1. create a global variable to store the config value
+      // 2. this global variable is belong to the Lua State in skynet global envrionment (E->L) 
 			skynet_setenv(key,value);
 		}
+
+    // pop 1 element out of the stack
 		lua_pop(L,1);
+
+    // ----------------------------------------- Index
+    // b. the key                                 (-1)
+    // a. first the result table is on the stack  (-2)
 	}
+
+  // pop 1 element out of the stack
 	lua_pop(L,1);
+  
+  // ----------------------------------------- Index
+  // a. first the result table is on the stack  (-1)
 }
 
 // set SIGPIPE signal's handler function to SIG_IGN (ignore this signal)
@@ -183,21 +221,32 @@ main(int argc, char *argv[]) {
 
 	struct skynet_config config;
 
+  // create a new Lua State and open all libs for this State
 	struct lua_State *L = lua_newstate(skynet_lalloc, NULL);
 	luaL_openlibs(L);	// link lua lib
 
+  // load config lua code and push the result function to the stack
 	int err = luaL_loadstring(L, load_config);
 	assert(err == LUA_OK);
-	lua_pushstring(L, config_file);
 
+  // push the config file name string to the stack
+	lua_pushstring(L, config_file);
+  
+  // run the config lua code with 1 argument (config_file) and 1 result (the result table)
+  // the result is pushed on the top of the stack
 	err = lua_pcall(L, 1, 1, 0);
 	if (err) {
 		fprintf(stderr,"%s\n",lua_tostring(L,-1));
 		lua_close(L);
 		return 1;
 	}
-	_init_env(L);
 
+  // traverse the result table and parse each config in element 
+  // and set config values into global variables (belong to the Lua State in skynet global environment E->L)
+	_init_env(L);
+  
+  // get configs in the skynet environment or the default config in the 2nd argument
+  // and set configs to the config structure
 	config.thread =  optint("thread",8);
 	config.module_path = optstring("cpath","./cservice/?.so");
 	config.harbor = optint("harbor", 1);
@@ -206,8 +255,11 @@ main(int argc, char *argv[]) {
 	config.logger = optstring("logger", NULL);
 	config.logservice = optstring("logservice", "logger");
 
+  // close the Lua State that was used to run lua config code
 	lua_close(L);
 
+  // defined in skynet_start.c:
+  // start skynet with the configs in the structure
 	skynet_start(&config);
 
   // definded in skynet_server.c: 

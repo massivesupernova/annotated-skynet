@@ -30,15 +30,28 @@ skynet_getenv(const char *key) {
 	return result;
 }
 
+// 1. create a global variable to store the value
+// 2. this global variable is belong to the Lua State in skynet global envrionment (E->L)
 void 
 skynet_setenv(const char *key, const char *value) {
 	SPIN_LOCK(E)
-	
+      
 	lua_State *L = E->L;
+
+  // get global variable (with the name of string in the key) and push its value into the stack
 	lua_getglobal(L, key);
+
+  // first there is not this global variable exist (the top of the stack is nil)
 	assert(lua_isnil(L, -1));
+
+  // pop the nil out of the stack
 	lua_pop(L,1);
+
+  // push the value to the stack
 	lua_pushstring(L,value);
+
+  // create a new global varible with the name of key and set the top element as its value
+  // and the top element is puped out of the stack
 	lua_setglobal(L,key);
 
 	SPIN_UNLOCK(E)
