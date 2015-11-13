@@ -133,19 +133,28 @@ _launch(struct skynet_context * context, void *ud, int type, int session, uint32
 
 int
 snlua_init(struct snlua *l, struct skynet_context *ctx, const char * args) {
+  // alloc a string 'tmp' to store the args (such as "bootstrap")
+  // this string is represented the lua service needed to launch
 	int sz = strlen(args);
 	char * tmp = skynet_malloc(sz);
 	memcpy(tmp, args, sz);
+  
+  // set ctx->cb to _launch and set ctx->cb_ud to the object of snlua `l`
 	skynet_callback(ctx, l , _launch);
+
+  // call "REG" function: cmd_reg(ctx, NULL)
+  // the ctx->handle is convert to string and stored at ctx->result
+  // the returned string is ctx->result
 	const char * self = skynet_command(ctx, "REG", NULL);
 	uint32_t handle_id = strtoul(self+1, NULL, 16);
-	// it must be first message
+	// it must be first message: send message of `tmp` (with size of `sz`, such as "bootstrap") to handle_id
 	skynet_send(ctx, 0, handle_id, PTYPE_TAG_DONTCOPY,0, tmp, sz);
 	return 0;
 }
 
 struct snlua *
 snlua_create(void) {
+  // create snlua and new a Lua State with it
 	struct snlua * l = skynet_malloc(sizeof(*l));
 	memset(l,0,sizeof(*l));
 	l->L = lua_newstate(skynet_lalloc, NULL);
