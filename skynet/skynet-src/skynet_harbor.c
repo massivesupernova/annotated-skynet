@@ -28,7 +28,16 @@ skynet_harbor_message_isremote(uint32_t handle) {
 
 void
 skynet_harbor_init(int harbor) {
-	HARBOR = (unsigned int)harbor << HANDLE_REMOTE_SHIFT;
+  // 1. if harhor is 0 then the server has only one skynet node.
+  // in this condition, it will start cdummy service.
+  // 2. else the server has multiple skynet nodes (1 ~ 255)
+  // in this condition, master node will start a cmaster and cslave service, 
+  // and slave node will start a cslave service to do node communication
+  
+  // initialize global varibale HARBOR
+  // if harhor is 0 then HARBOR will be 0
+  // else HARBOR will be 0xXX00_0000
+  HARBOR = (unsigned int)harbor << HANDLE_REMOTE_SHIFT;
 }
 
 void
