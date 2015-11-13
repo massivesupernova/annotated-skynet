@@ -24,6 +24,8 @@ static struct modules * M = NULL;
 static void *
 _try_open(struct modules *m, const char * name) {
 	const char *l;
+
+  // default path is "./cservice/?.so"
 	const char * path = m->path;
 	size_t path_size = strlen(path);
 	size_t name_size = strlen(name);
@@ -37,9 +39,15 @@ _try_open(struct modules *m, const char * name) {
 		memset(tmp,0,sz);
 		while (*path == ';') path++;
 		if (*path == '\0') break;
+
+    // current is first non-';' char 
+    // find the position of next ';', 
+    // if it is not found consider the end of the string as this position
 		l = strchr(path, ';');
 		if (l == NULL) l = path + strlen(path);
-		int len = l - path;
+
+    // copy the module name to replace the '?' in the path
+    int len = l - path;
 		int i;
 		for (i=0;path[i]!='?' && i < len ;i++) {
 			tmp[i] = path[i];
@@ -51,6 +59,19 @@ _try_open(struct modules *m, const char * name) {
 			fprintf(stderr,"Invalid C service path\n");
 			exit(1);
 		}
+
+    // <dlfcn.h> void* dlopen(const char* filename, int flag);
+    // 1. loads the dynamic library file named by the null-terminated string `filename`
+    // and return an opaque "handle" for the dynamic library.
+    // 2. if `filename` is NULL, then the returned handle is for the main program.
+    // 3. if the library has dependencies on other shared libraries,
+    // then these are also automatically loaded by the dynamic linker using the same rules.
+    // 4. RTLD_NOW: all undefined symbols in the library are resolved before dlopen returns
+    // 5. RTLD_GLOBAL: the symbols defined by this library will be available for 
+    // symbol resolution of subsequently loaded libraries.
+    
+    // load dynamic library file for example "./cservice/name.so"
+    // and return the handle, if dynamic library loaded success then end the loop
 		dl = dlopen(tmp, RTLD_NOW | RTLD_GLOBAL);
 		path = l;
 	}while(dl == NULL);
@@ -92,6 +113,9 @@ _open_sym(struct skynet_module *mod) {
 
 struct skynet_module * 
 skynet_module_query(const char * name) {
+
+  // query skynet module from M->m[i] by compare M->m[i].name with name
+  // if found return this skynet module
 	struct skynet_module * result = _query(name);
 	if (result)
 		return result;
@@ -100,13 +124,23 @@ skynet_module_query(const char * name) {
 
 	result = _query(name); // double check
 
+  // if the module (such as "logger" and "snlua") is not found, 
+  // then load dynamic library and append new module to M and return this new module
 	if (result == NULL && M->count < MAX_MODULE_TYPE) {
 		int index = M->count;
+    
+    // try to load dymaic library of c service 
+    // located in "./cservice/<name>.so" (default setting)
 		void * dl = _try_open(M,name);
 		if (dl) {
+      // if dynamic library load success, then:
+      // 1. load synbols (<name>_create _init _release _signal) to M->m[index]
+      // 2. M->m[index].name keep the name of module
+      // 3. M->m[index].module keep the dynamic library handle
+      // 4. add up the total moudle count
+      // 5. return the new module
 			M->m[index].name = name;
 			M->m[index].module = dl;
-
 			if (_open_sym(&M->m[index]) == 0) {
 				M->m[index].name = skynet_strdup(name);
 				M->count ++;
