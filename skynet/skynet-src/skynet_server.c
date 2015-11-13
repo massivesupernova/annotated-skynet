@@ -118,14 +118,22 @@ drop_message(struct skynet_message *msg, void *ud) {
 
 struct skynet_context * 
 skynet_context_new(const char * name, const char *param) {
+  // if the module is already loaded in the M then return it directly
+  // otherwise do the dynamic library loading (such as "./cservice/<name>.so") 
+  // and append a new module to M and return the new module
 	struct skynet_module * mod = skynet_module_query(name);
 
 	if (mod == NULL)
 		return NULL;
 
+  // call module's <name>_create() function to create module
+  // if create fail just return NULL
 	void *inst = skynet_module_instance_create(mod);
 	if (inst == NULL)
 		return NULL;
+
+  // alloc a skynet context and set ctx->mod to keep loaded skynet module
+  // and ctx->instance to keep new created module instance
 	struct skynet_context * ctx = skynet_malloc(sizeof(*ctx));
 	CHECKCALLING_INIT(ctx)
 
@@ -141,15 +149,29 @@ skynet_context_new(const char * name, const char *param) {
 	ctx->endless = false;
 	// Should set to 0 first to avoid skynet_handle_retireall get an uninitialized handle
 	ctx->handle = 0;	
+
+  // auto genarate a handle for this ctx 
+  // and sotre this ctx to the global handle_storage (H)'s slot according to the handle value
+  // then this handle is returned and saved to ctx->handle
 	ctx->handle = skynet_handle_register(ctx);
+
+  // alloc a message queue for this c service (or module) according to its handle
 	struct message_queue * queue = ctx->queue = skynet_mq_create(ctx->handle);
 	// init function maybe use ctx->handle, so it must init at last
+  
+  // inc G_NODE.total, count the number of launched services
 	context_inc();
-
+  
+  // call c service (or module)'s init function (<name>_init) to init the module
+  // return 0 indicates success
 	CHECKCALLING_BEGIN(ctx)
 	int r = skynet_module_instance_init(mod, inst, ctx, param);
 	CHECKCALLING_END(ctx)
+
+  // if initialize module success, then set ctx->init to true
+  // then push alloced queue to global_queue (Q) and return initialized skynet_context
 	if (r == 0) {
+    // ctx->ref init as 2, so the first time call will not release the skynet_context
 		struct skynet_context * ret = skynet_context_release(ctx);
 		if (ret) {
 			ctx->init = true;
@@ -159,7 +181,9 @@ skynet_context_new(const char * name, const char *param) {
 			skynet_error(ret, "LAUNCH %s %s", name, param ? param : "");
 		}
 		return ret;
-	} else {
+	} 
+  // if module initialize fail, then release resource and return NULL
+  else {
 		skynet_error(ctx, "FAILED launch %s", name);
 		uint32_t handle = ctx->handle;
 		skynet_context_release(ctx);
@@ -649,6 +673,9 @@ skynet_command(struct skynet_context * context, const char * cmd , const char * 
 	return NULL;
 }
 
+// if need copy then copy string and set to *data
+// if need alloc session then alloc new session and set to *session
+// the type info (lower 8-bit) is merged into *sz (higher 8-bit)
 static void
 _filter_args(struct skynet_context * context, int type, int *session, void ** data, size_t * sz) {
 	int needcopy = !(type & PTYPE_TAG_DONTCOPY);
@@ -672,22 +699,30 @@ _filter_args(struct skynet_context * context, int type, int *session, void ** da
 
 int
 skynet_send(struct skynet_context * context, uint32_t source, uint32_t destination , int type, int session, void * data, size_t sz) {
-	if ((sz & MESSAGE_TYPE_MASK) != sz) {
+  // if sz is too large logging error and return
+  if ((sz & MESSAGE_TYPE_MASK) != sz) {
 		skynet_error(context, "The message to %x is too large", destination);
 		if (type & PTYPE_TAG_DONTCOPY) {
 			skynet_free(data);
 		}
 		return -1;
 	}
+
+  // 1. alloc new session if need alloc
+  // 2. copy message string of data if need to copy
+  // 3. encode the type info (lower 8-bit) into the message size (sz, high 8-bit)
 	_filter_args(context, type, &session, (void **)&data, &sz);
 
+  // if source is 0 then use context itself handle as source
 	if (source == 0) {
 		source = context->handle;
 	}
 
+  // if destination is 0 just return
 	if (destination == 0) {
 		return session;
 	}
+  
 	if (skynet_harbor_message_isremote(destination)) {
 		struct remote_message * rmsg = skynet_malloc(sizeof(*rmsg));
 		rmsg->destination.handle = destination;
