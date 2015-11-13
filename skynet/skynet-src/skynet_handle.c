@@ -31,6 +31,11 @@ struct handle_storage {
 
 static struct handle_storage *H = NULL;
 
+// handle_storage has multiple slots
+// each slot can used to store a skynet_context (ctx)
+// the skynet_context is stored according to auto genarated handle
+// if the handle is `handle`, then the stored slot index will be `handle&(s->slot_size-1)`
+// auto genarated handle is stored in ctx->handle
 uint32_t
 skynet_handle_register(struct skynet_context *ctx) {
 	struct handle_storage *s = H;
@@ -40,19 +45,34 @@ skynet_handle_register(struct skynet_context *ctx) {
 	for (;;) {
 		int i;
 		for (i=0;i<s->slot_size;i++) {
+      // s->handle_index initialized with 1 
+      // and it is updated when a new slot (a new skynet context) added
+      // the first `handle` here will be 1, `hash` will be 1
 			uint32_t handle = (i+s->handle_index) & HANDLE_MASK;
 			int hash = handle & (s->slot_size-1);
+
+      // 1. if found slot is empty when save this skynet context to it 
+      // and return the handle (high 8-bit is sotred with the value of s->harbor
+      // this handle will be stored to ctx->handle
+      // 2. if current slot is not empty then continue loop to check next slot
 			if (s->slot[hash] == NULL) {
 				s->slot[hash] = ctx;
+        
+        // s->handle_index will be: 1 => 2
 				s->handle_index = handle + 1;
 
 				rwlock_wunlock(&s->lock);
 
+        // sotre s->harbor to handle's high 8-bit
+        // returned handle will be stored to ctx->handle
 				handle |= s->harbor;
 				return handle;
 			}
 		}
 		assert((s->slot_size*2 - 1) <= HANDLE_MASK);
+
+    // if all slot is used then double the slot size 
+    // and continue loop to find slot to save skynet_context
 		struct skynet_context ** new_slot = skynet_malloc(s->slot_size * 2 * sizeof(struct skynet_context *));
 		memset(new_slot, 0, s->slot_size * 2 * sizeof(struct skynet_context *));
 		for (i=0;i<s->slot_size;i++) {
@@ -242,11 +262,15 @@ skynet_handle_namehandle(uint32_t handle, const char *name) {
 void 
 skynet_handle_init(int harbor) {
 	assert(H==NULL);
+
+  // alloc handle_storage and 4 slot, each slot is a pointer to skynet_context
 	struct handle_storage * s = skynet_malloc(sizeof(*H));
 	s->slot_size = DEFAULT_SLOT_SIZE;
 	s->slot = skynet_malloc(s->slot_size * sizeof(struct skynet_context *));
 	memset(s->slot, 0, s->slot_size * sizeof(struct skynet_context *));
 
+  // init the handle storage read write lock
+  // and init other members in the handle storage
 	rwlock_init(&s->lock);
 	// reserve 0 for system
 	s->harbor = (uint32_t) (harbor & 0xff) << HANDLE_REMOTE_SHIFT;
@@ -255,6 +279,7 @@ skynet_handle_init(int harbor) {
 	s->name_count = 0;
 	s->name = skynet_malloc(s->name_cap * sizeof(struct handle_name));
 
+  // store to the global handle storage H
 	H = s;
 
 	// Don't need to free H
