@@ -214,30 +214,81 @@ bootstrap(struct skynet_context * logger, const char * cmdline) {
 	}
 }
 
+// skynet_start will first start 2 services:
+// 1. logger c service: skynet/service-src/service_logger.c 
+// 2. snlua c service: skynet/service-src/service_snlua.c
+
+// c service in skynet:
+// 1. each service has a auto generated handle
+// 2. according to this handle, it is stored in the global handle_storage (H)'s slot
+// 3. each this slot has the type of skynet_context (ctx), it stores the information of the c service
+//    [ctx->mod] pointer to M->m[i] (skynet_module): 
+//    - store the dynamic library information for this c service (or module)
+//    - M->m[i].name => the string of module name
+//    - M->m[i].module => the handle for the dynamic library
+//    - M->m[i].create .init .release .signal => the address of library's function symbol
+//    [ctx->instance]: the created service object (by call <service_name>_create)
+//    [ctx->handle]: the service's handle
+//    [ctx->init]: the service is initialized success (by call <service_name>_init)
+//    [ctx->queue]: a new message queue is allocated for each service
+// 4. each c service has a message queue attached and this queue is stored at ctx->queue
+//    and is inserted into the global_queue (Q)
+// 5. after each c service launched (_create and _init function are called success), 
+//    the global node G_NODE (skynet_node)'s member G_NODE.total is added up by 1
+
 void 
 skynet_start(struct skynet_config * config) {
-	if (config->daemon) {
+  // if a daemon file configed then daemonize current process
+  // and save the process id to this file and lock the file
+  // config->daemon default is NULL (dont start skynet as daemon program)
+	if (config->daemon) { 
 		if (daemon_init(config->daemon)) {
 			exit(1);
 		}
 	}
+  
+  // init global HARBOR, config->harbor default is 1 (1 skynet node)
 	skynet_harbor_init(config->harbor);
-	skynet_handle_init(config->harbor);
+
+  // alloc and init global handle storage H
+  // config->harbor is used to init H->harbor, same as HARBOR
+  skynet_handle_init(config->harbor);
+
+  // alloc and init global queue Q
 	skynet_mq_init();
+
+  // module_path: "cpath" default is "./cservice/?.so"
+  // alloc and init global skynet modules M
+  // module_path (generic library name) is saved in M->path
+  // module conut M->count initialized to 0
 	skynet_module_init(config->module_path);
+
+  // create and init system timer TI
 	skynet_timer_init();
+  
+  // create and init SOCKET_SERVER
 	skynet_socket_init();
 
+  // config->logservice: "logservice" default module name is "logger"
+  // config->logger: "logger" is used to config logging file, default is NULL using standard output
+  // launch log service: using "logger" as module name and logging_file_name as parameter
+  // this c service (module) is defined in "service-src/service_logger.c"
 	struct skynet_context *ctx = skynet_context_new(config->logservice, config->logger);
 	if (ctx == NULL) {
 		fprintf(stderr, "Can't launch %s service\n", config->logservice);
 		exit(1);
 	}
 
+  // config->bootstrap: "bootstrap" default is "snlua bootstrap"
+  // launch snlua service: using "snlua" as module name and "bootstrap" as parameter
+  // this c service (or module) is deinfed in "service-src/service_snlua.c"
+  // "bootstrap" default is "service/bootstrap.lua" used to bootstrap skynet 
 	bootstrap(ctx, config->bootstrap);
-
+  
+  // config->thread: worker thread count, default is 8 (usually set to the real cores of your machine)
+  // start skynet: run monitor thread, timer thread, socket thread, and multiple worker threads
 	start(config->thread);
-
+  
 	// harbor_exit may call socket send, so it should exit before socket_free
 	skynet_harbor_exit();
 	skynet_socket_free();
