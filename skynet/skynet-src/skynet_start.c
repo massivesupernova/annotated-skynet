@@ -18,8 +18,8 @@
 #include <string.h>
 
 struct monitor {
-	int count;
-	struct skynet_monitor ** m;
+	int count; // number of worker threads
+	struct skynet_monitor ** m; // m[i] is a pointer to skynet_monitor, each worker thread has a skynet_monitor
 	pthread_cond_t cond;
 	pthread_mutex_t mutex;
 	int sleep;
@@ -53,7 +53,11 @@ wakeup(struct monitor *m, int busy) {
 static void *
 thread_socket(void *p) {
 	struct monitor * m = p;
+
+  // set socket thread's specific data to THREAD_SOCKET
 	skynet_initthread(THREAD_SOCKET);
+
+  // continue to poll socket and signal worker thread to process
 	for (;;) {
 		int r = skynet_socket_poll();
 		if (r==0)
@@ -84,13 +88,22 @@ static void *
 thread_monitor(void *p) {
 	struct monitor * m = p;
 	int i;
-	int n = m->count;
+	int n = m->count; // the number of worker threads
+
+  // set monitor thread's specified data to THREAD_MONITOR
 	skynet_initthread(THREAD_MONITOR);
+
+  // monitor worker threads enter endless loop or not
+  // continue checking until CHECK_ABORT (G_NODE.total == 0, c services become to 0)
 	for (;;) {
 		CHECK_ABORT
+
+    // call monitor check for each worker thread
 		for (i=0;i<n;i++) {
 			skynet_monitor_check(m->m[i]);
 		}
+
+    // then wait 5 seconds and continue loop to check again
 		for (i=0;i<5;i++) {
 			CHECK_ABORT
 			sleep(1);
@@ -103,13 +116,18 @@ thread_monitor(void *p) {
 static void *
 thread_timer(void *p) {
 	struct monitor * m = p;
+
+  // set timer thread's specific data to THREAD_TIMER
 	skynet_initthread(THREAD_TIMER);
+
+  
 	for (;;) {
 		skynet_updatetime();
 		CHECK_ABORT
 		wakeup(m,m->count-1);
-		usleep(2500);
+		usleep(2500); // sleep 2.5s
 	}
+  
 	// wakeup socket thread
 	skynet_socket_exit();
 	// wakeup all worker thread
@@ -127,6 +145,7 @@ thread_worker(void *p) {
 	int weight = wp->weight;
 	struct monitor *m = wp->m;
 	struct skynet_monitor *sm = m->m[id];
+  // set worker thread's specific data to THREAD_WORKER
 	skynet_initthread(THREAD_WORKER);
 	struct message_queue * q = NULL;
 	while (!m->quit) {
@@ -151,18 +170,22 @@ thread_worker(void *p) {
 
 static void
 start(int thread) {
-	pthread_t pid[thread+3];
+	pthread_t pid[thread+3]; // worker threads + monitor + timer + socket thread
 
+  // alloc monitor and initialize it
 	struct monitor *m = skynet_malloc(sizeof(*m));
 	memset(m, 0, sizeof(*m));
-	m->count = thread;
+	m->count = thread; // count represents the number of worker threads
 	m->sleep = 0;
 
+  // alloc array of skynet_monitors and attach it to monitor->m
 	m->m = skynet_malloc(thread * sizeof(struct skynet_monitor *));
 	int i;
 	for (i=0;i<thread;i++) {
 		m->m[i] = skynet_monitor_new();
 	}
+
+  // initialize monitor's mutex and condition veriable
 	if (pthread_mutex_init(&m->mutex, NULL)) {
 		fprintf(stderr, "Init mutex error");
 		exit(1);
@@ -172,10 +195,13 @@ start(int thread) {
 		exit(1);
 	}
 
+  // create and run monitor, timer and socket threads
+  // and pass monitor `m` as threading function's argument
 	create_thread(&pid[0], thread_monitor, m);
 	create_thread(&pid[1], thread_timer, m);
 	create_thread(&pid[2], thread_socket, m);
 
+  // for worker threads
 	static int weight[] = { 
 		-1, -1, -1, -1, 0, 0, 0, 0,
 		1, 1, 1, 1, 1, 1, 1, 1, 
@@ -183,16 +209,24 @@ start(int thread) {
 		3, 3, 3, 3, 3, 3, 3, 3, };
 	struct worker_parm wp[thread];
 	for (i=0;i<thread;i++) {
-		wp[i].m = m;
-		wp[i].id = i;
+		wp[i].m = m; // attach the monitor `m` to worker thread
+		wp[i].id = i; // each worker thread has a id: 0, 1, 2, ...
+
+    // set worker thread weight:
+    // 1. if worker thread id is less then 32, using the weight defined above
+    // 2. otherwise using the weight of 0
 		if (i < sizeof(weight)/sizeof(weight[0])) {
 			wp[i].weight= weight[i];
 		} else {
 			wp[i].weight = 0;
 		}
+    
+    // create and run worker threads 
+    // and pass worker_parm as threading function's argument
 		create_thread(&pid[i+3], thread_worker, &wp[i]);
 	}
 
+  // wait all threads terminate
 	for (i=0;i<thread+3;i++) {
 		pthread_join(pid[i], NULL); 
 	}

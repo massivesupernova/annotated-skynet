@@ -122,8 +122,12 @@ static int
 _launch(struct skynet_context * context, void *ud, int type, int session, uint32_t source , const void * msg, size_t sz) {
 	assert(type == 0 && session == 0);
 	struct snlua *l = ud;
+  
+  // clear this service's callback function
 	skynet_callback(context, NULL, NULL);
-	int err = _init(l, context, msg, sz);
+
+  // do snlua service's work
+  int err = _init(l, context, msg, sz);
 	if (err) {
 		skynet_command(context, "EXIT", NULL);
 	}
@@ -140,6 +144,7 @@ snlua_init(struct snlua *l, struct skynet_context *ctx, const char * args) {
 	memcpy(tmp, args, sz);
   
   // set ctx->cb to _launch and set ctx->cb_ud to the object of snlua `l`
+  // set callback function to be called when destination received the message
 	skynet_callback(ctx, l , _launch);
 
   // call "REG" function: cmd_reg(ctx, NULL)
@@ -147,7 +152,13 @@ snlua_init(struct snlua *l, struct skynet_context *ctx, const char * args) {
   // the returned string is ctx->result
 	const char * self = skynet_command(ctx, "REG", NULL);
 	uint32_t handle_id = strtoul(self+1, NULL, 16);
-	// it must be first message: send message of `tmp` (with size of `sz`, such as "bootstrap") to handle_id
+
+  // send message of `tmp` (with size of `sz`, such as "bootstrap") to handle_id
+  // 1. if this handle_id is consider as remote handle (high 8-bit is not 0 and not equal to HARBOR)
+  // then push this message to the message queue of REMOTE->queue
+  // 2. else push this message into the service's message queue (service ctx->queue)
+  
+	// it must be first message
 	skynet_send(ctx, 0, handle_id, PTYPE_TAG_DONTCOPY,0, tmp, sz);
 	return 0;
 }

@@ -708,9 +708,10 @@ skynet_send(struct skynet_context * context, uint32_t source, uint32_t destinati
 		return -1;
 	}
 
-  // 1. alloc new session if need alloc
-  // 2. copy message string of data if need to copy
-  // 3. encode the type info (lower 8-bit) into the message size (sz, high 8-bit)
+  // 1. alloc new `session` if need alloc
+  // 2. copy message string of `data` if need to copy
+  // 3. encode the type info (lower 8-bit) into the message size (`sz`, high 8-bit)
+  // 4. this message size: remote_message.sz or skynet_message.sz
 	_filter_args(context, type, &session, (void **)&data, &sz);
 
   // if source is 0 then use context itself handle as source
@@ -722,12 +723,14 @@ skynet_send(struct skynet_context * context, uint32_t source, uint32_t destinati
 	if (destination == 0) {
 		return session;
 	}
-  
+
+  // check destination handle is remote handle or not (high 8-bit is not 0 and not equal to HARBOR)
 	if (skynet_harbor_message_isremote(destination)) {
 		struct remote_message * rmsg = skynet_malloc(sizeof(*rmsg));
 		rmsg->destination.handle = destination;
 		rmsg->message = data;
 		rmsg->sz = sz;
+    // construct a remote_message and push it into the REMOTE's message queue (REMOTE->queue)
 		skynet_harbor_send(rmsg, source, session);
 	} else {
 		struct skynet_message smsg;
@@ -735,7 +738,7 @@ skynet_send(struct skynet_context * context, uint32_t source, uint32_t destinati
 		smsg.session = session;
 		smsg.data = data;
 		smsg.sz = sz;
-
+    // construct the message and push into the service's message queue (ctx->queue)
 		if (skynet_context_push(destination, &smsg)) {
 			skynet_free(data);
 			return -1;
