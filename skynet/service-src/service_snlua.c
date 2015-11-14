@@ -138,7 +138,7 @@ _launch(struct skynet_context * context, void *ud, int type, int session, uint32
 int
 snlua_init(struct snlua *l, struct skynet_context *ctx, const char * args) {
   // alloc a string 'tmp' to store the args (such as "bootstrap")
-  // this string is represented the lua service needed to launch
+  // this string represents the lua service needed to launch
 	int sz = strlen(args);
 	char * tmp = skynet_malloc(sz);
 	memcpy(tmp, args, sz);
