@@ -71,48 +71,94 @@ static int
 _init(struct snlua *l, struct skynet_context *ctx, const char * args, size_t sz) {
 	lua_State *L = l->L;
 	l->ctx = ctx;
-	lua_gc(L, LUA_GCSTOP, 0);
+
+  // stop gc
+  lua_gc(L, LUA_GCSTOP, 0);
+
+  // set `registry_table.LUA_NOENV = true` and pop up the boolean value out of stack
 	lua_pushboolean(L, 1);  /* signal for libraries to ignore env. vars. */
 	lua_setfield(L, LUA_REGISTRYINDEX, "LUA_NOENV");
+
+  // open all libs for this Lua State
 	luaL_openlibs(L);
+
+  // set `registry_table.skynet_context = ctx` and pop up the light userdatd out of stack
 	lua_pushlightuserdata(L, ctx);
 	lua_setfield(L, LUA_REGISTRYINDEX, "skynet_context");
-	luaL_requiref(L, "skynet.codecache", codecache , 0);
-	lua_pop(L,1);
 
+  // set the module "skynet.codecache" loaded: `package.loaded["skynet.codecache"] = codecache(L)`
+	luaL_requiref(L, "skynet.codecache", codecache , 0);
+	lua_pop(L,1); // and pop up the copy of the module out of the stack
+
+  // skynet env:
+  // root = "./"
+  // thread = 8
+  // logger = nil
+  // logpath = "."
+  // harbor = 1
+  // address = "127.0.0.1:2526"
+  // master = "127.0.0.1:2013"
+  // start = "main"  -- main script
+  // bootstrap = "snlua bootstrap" -- The service for bootstrap
+  // standalone = "0.0.0.0:2013"
+  // luaservice = root.."service/?.lua;"..root.."test/?.lua;"..root.."examples/?.lua"
+  // lualoader = "lualib/loader.lua"
+  // -- preload = "./examples/preload.lua" -- run preload.lua before every lua service run
+  // snax = root.."examples/?.lua;"..root.."test/?.lua"
+  // -- snax_interface_g = "snax_g"
+  // cpath = root.."cservice/?.so"
+  // -- daemon = "./skynet.pid"
+
+
+  // set global variable (LUA_PATH = "./lualib/?.lua;./lualib/?/init.lua") by default
 	const char *path = optstring(ctx, "lua_path","./lualib/?.lua;./lualib/?/init.lua");
 	lua_pushstring(L, path);
 	lua_setglobal(L, "LUA_PATH");
+
+  // set global variable (LUA_CPATH = "./luaclib/?.so") by default
 	const char *cpath = optstring(ctx, "lua_cpath","./luaclib/?.so");
 	lua_pushstring(L, cpath);
 	lua_setglobal(L, "LUA_CPATH");
+
+  // set global variable (LUA_SERVICE = "./service/?.lua") by default
 	const char *service = optstring(ctx, "luaservice", "./service/?.lua");
 	lua_pushstring(L, service);
 	lua_setglobal(L, "LUA_SERVICE");
+
+  // set global variable (LUA_PRELOAD = "./examples/preload.lua") for example
 	const char *preload = skynet_command(ctx, "GETENV", "preload");
 	lua_pushstring(L, preload);
 	lua_setglobal(L, "LUA_PRELOAD");
 
+  // put function `traceback` into the stack  
 	lua_pushcfunction(L, traceback);
 	assert(lua_gettop(L) == 1);
 
+  // load "./lualib/loader.lua" and compile it to the top of the stack
 	const char * loader = optstring(ctx, "lualoader", "./lualib/loader.lua");
-
 	int r = luaL_loadfile(L,loader);
 	if (r != LUA_OK) {
 		skynet_error(ctx, "Can't load %s : %s", loader, lua_tostring(L, -1));
 		_report_launcher_error(ctx);
 		return 1;
 	}
+
+  // push the string of args ("bootstrap" for example) in to the stack
 	lua_pushlstring(L, args, sz);
+
+  // call the loader with the args, with 1 argument, no result, 
+  // and the message handler function is at index of 1 (traceback)
 	r = lua_pcall(L,1,0,1);
 	if (r != LUA_OK) {
 		skynet_error(ctx, "lua loader error : %s", lua_tostring(L, -1));
 		_report_launcher_error(ctx);
 		return 1;
 	}
+
+  // clear the stack
 	lua_settop(L,0);
 
+  // restart the gc
 	lua_gc(L, LUA_GCRESTART, 0);
 
 	return 0;
@@ -138,7 +184,7 @@ _launch(struct skynet_context * context, void *ud, int type, int session, uint32
 int
 snlua_init(struct snlua *l, struct skynet_context *ctx, const char * args) {
   // alloc a string 'tmp' to store the args (such as "bootstrap")
-  // this string represents the lua service needed to launch
+  // this string is represented the lua service needed to launch
 	int sz = strlen(args);
 	char * tmp = skynet_malloc(sz);
 	memcpy(tmp, args, sz);
