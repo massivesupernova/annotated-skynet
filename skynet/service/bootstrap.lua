@@ -1,6 +1,10 @@
+-- load the module "./lualib/skynet.lua"
 local skynet = require "skynet"
+-- load the module "./lualib/skynet/harbor.lua"
 local harbor = require "skynet.harbor"
+-- load the module "./lualib/skynet/manager.lua"
 require "skynet.manager"	-- import skynet.launch, ...
+-- load the module "./luaclib/memory.so" <= "./lualib-src/lua-memory.c"
 local memory = require "memory"
 
 skynet.start(function()

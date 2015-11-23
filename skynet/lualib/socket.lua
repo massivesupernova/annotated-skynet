@@ -1,5 +1,8 @@
+-- load "./luaclib/socketdriver.so" <= "./lualib-src/lua-socket.c"
 local driver = require "socketdriver"
+-- load "./lualib/skynet.lua"
 local skynet = require "skynet"
+-- load luaopen_skynet_core in "./luaclib/skynet.so" <= "./lualib-src/lua-skynet.c"
 local skynet_core = require "skynet.core"
 local assert = assert
 
