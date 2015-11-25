@@ -52,6 +52,8 @@ skynet.start(function()
   -- 3. in multiple nodes netwrok, both master and slave node will start cslave service
   -- 4. finally, start service_mgr service and user start (or main if not given) service
   
+  -- skynet.newservice "datacenterd" => skynet.call(".launcher", "lua" , "LAUNCH", "snlua", "datacenterd")
+  
 	if standalone then
 		local datacenter = skynet.newservice "datacenterd"
 		skynet.name("DATACENTER", datacenter)
