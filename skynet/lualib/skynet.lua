@@ -367,8 +367,12 @@ skynet.unpack = assert(c.unpack)
 skynet.tostring = assert(c.tostring)
 skynet.trash = assert(c.trash)
 
+-- for example: (".launcher", session)
 local function yield_call(service, session)
+  -- watching_session[session] = ".launcher"
 	watching_session[session] = service
+  -- call to coroutine.yield(...), all arguments will be passed and 
+  -- returned as extra results when coroutine.resume 
 	local succ, msg, sz = coroutine_yield("CALL", session)
 	watching_session[session] = nil
 	if not succ then
@@ -380,6 +384,9 @@ end
 -- for example: skynet.call(".launcher", "lua" , "LAUNCH", "snlua", "datacenterd")
 function skynet.call(addr, typename, ...)
 	local p = proto[typename]
+  -- c.send(".launcher", PTYPE_LUA, nil, "LAUNCH snlua datacenterd, 3")
+  -- will call to _send in lua-skynet.c: will send a message 
+  --   of light userdata "LAUNCH snlua datacenterd" to launcher service's message queue
 	local session = c.send(addr, p.id , nil , p.pack(...))
 	if session == nil then
 		error("call to invalid address " .. skynet.address(addr))
