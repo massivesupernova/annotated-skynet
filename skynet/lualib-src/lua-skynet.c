@@ -178,26 +178,32 @@ get_dest_string(lua_State *L, int index) {
 	 lightuserdata message_ptr
 	 integer len
  */
-static int
+static int // for example: _send(L) with ".launcher", PTYPE_LUA, nil, userdata:"LAUNCH snlua datacenterd", num:3
 _send(lua_State *L) {
 	struct skynet_context * context = lua_touserdata(L, lua_upvalueindex(1));
+	
+  // dest is the first integer argument or 0
 	uint32_t dest = (uint32_t)lua_tointeger(L, 1);
 	const char * dest_string = NULL;
 	if (dest == 0) {
 		if (lua_type(L,1) == LUA_TNUMBER) {
 			return luaL_error(L, "Invalid service address 0");
 		}
+	  // if the 1st argument is not integer, then it is string
+	  // dest_string = ".launcher" for example
 		dest_string = get_dest_string(L, 1);
 	}
-
+  // ensure the 2nd argument is a integer, type = PTYPE_LUA for example
 	int type = luaL_checkinteger(L, 2);
 	int session = 0;
+  // the 3rd argument is the session, if it is nil flag it to auto alloc (PTYPE_TAG_ALLOCSESSION)
 	if (lua_isnil(L,3)) {
 		type |= PTYPE_TAG_ALLOCSESSION;
 	} else {
 		session = luaL_checkinteger(L,3);
 	}
 
+  // the 4th argument is the packed data, can be string or userdata
 	int mtype = lua_type(L,4);
 	switch (mtype) {
 	case LUA_TSTRING: {
@@ -214,8 +220,14 @@ _send(lua_State *L) {
 		break;
 	}
 	case LUA_TLIGHTUSERDATA: {
+	  // the 4th argument is a userdata, "LAUNCH snlua datacenterd" for example
+	  // the 5th argument is a integer, 3 for example
 		void * msg = lua_touserdata(L,4);
 		int size = luaL_checkinteger(L,5);
+	  // if dest is a string, then use `sendname`, else it is a integer use `send`
+	  // when the message need sent is a userdata, it will flaged as DONTCOPY, it is fast than the string message
+	  // will call skynet_sendname in skynet_server.c for example:
+	  // (ctx, 0, ".launcher", PTYPE_LUA|ALLOCSESSION|DONTCOPY, nil, userdata:"LAUNCH snlua datacenterd", 3)
 		if (dest_string) {
 			session = skynet_sendname(context, 0, dest_string, type | PTYPE_TAG_DONTCOPY, session, msg, size);
 		} else {
@@ -231,6 +243,7 @@ _send(lua_State *L) {
 		// todo: maybe throw an error would be better
 		return 0;
 	}
+  // push the result session to the stack as the result
 	lua_pushinteger(L,session);
 	return 1;
 }
