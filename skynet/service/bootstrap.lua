@@ -9,11 +9,14 @@ local memory = require "memory"
 
 skynet.start(function()
 	local sharestring = tonumber(skynet.getenv "sharestring")
+  -- call to lexpandshrtbl(L) in lua-memory.c
 	memory.ssexpand(sharestring or 4096)
 
 	local standalone = skynet.getenv "standalone"
-
+  -- launch skynet_snlua.c service to load launcher.lua
 	local launcher = assert(skynet.launch("snlua","launcher"))
+  -- call to cmd_name and skynet_handle_namehandle(handle, "launcher")
+  -- insert the name into global handle_storage H->name[i]
 	skynet.name(".launcher", launcher)
 
 	local harbor_id = tonumber(skynet.getenv "harbor")
@@ -42,6 +45,13 @@ skynet.start(function()
 		skynet.name(".cslave", slave)
 	end
 
+  -- 1. single node network (harbor is 0) has a master node, 
+  --    will start cdummy and datacenterd services
+  -- 2. in multiple nodes network, master node is responsible for scheduling, 
+  --    will start cmaster and datacenterd services
+  -- 3. in multiple nodes netwrok, both master and slave node will start cslave service
+  -- 4. finally, start service_mgr service and user start (or main if not given) service
+  
 	if standalone then
 		local datacenter = skynet.newservice "datacenterd"
 		skynet.name("DATACENTER", datacenter)
