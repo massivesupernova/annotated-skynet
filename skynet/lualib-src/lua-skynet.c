@@ -83,14 +83,20 @@ forward_cb(struct skynet_context * context, void * ud, int type, int session, ui
 static int
 _callback(lua_State *L) {
 	struct skynet_context * context = lua_touserdata(L, lua_upvalueindex(1));
+  // get 2nd argument of boolean
 	int forward = lua_toboolean(L, 2);
+  // ensure the first argument is a function
 	luaL_checktype(L,1,LUA_TFUNCTION);
+  // set stack size to 1
 	lua_settop(L,1);
+  // set register_table[_cb] = function on top
 	lua_rawsetp(L, LUA_REGISTRYINDEX, _cb);
-
+  // push register_table[LUA_RIDX_MAINTHREAD] to stack
 	lua_rawgeti(L, LUA_REGISTRYINDEX, LUA_RIDX_MAINTHREAD);
+  // get the main thread on top
 	lua_State *gL = lua_tothread(L,-1);
-
+  // set user data to main thread gL
+  // set callback function to forward_cb or _cb
 	if (forward) {
 		skynet_callback(context, gL, forward_cb);
 	} else {
@@ -103,15 +109,19 @@ _callback(lua_State *L) {
 static int
 _command(lua_State *L) {
 	struct skynet_context * context = lua_touserdata(L, lua_upvalueindex(1));
+  // the first argument is a cmd, "LAUNCH" for example
 	const char * cmd = luaL_checkstring(L,1);
 	const char * result;
 	const char * parm = NULL;
 	if (lua_gettop(L) == 2) {
+	  // the 2nd argument is "snlua launcher" for example or NULL
 		parm = luaL_checkstring(L,2);
 	}
-
+  // skynet_command will call to cmd_"cmd" in skynet_server.c 
+  // return NULL if success, otherwise return the service handle string
 	result = skynet_command(context, cmd, parm);
 	if (result) {
+	  // if fail, push the service handle string to stack
 		lua_pushstring(L, result);
 		return 1;
 	}
