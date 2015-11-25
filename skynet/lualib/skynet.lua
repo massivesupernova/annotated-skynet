@@ -377,6 +377,7 @@ local function yield_call(service, session)
 	return msg,sz
 end
 
+-- for example: skynet.call(".launcher", "lua" , "LAUNCH", "snlua", "datacenterd")
 function skynet.call(addr, typename, ...)
 	local p = proto[typename]
 	local session = c.send(addr, p.id , nil , p.pack(...))
