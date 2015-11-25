@@ -136,6 +136,8 @@ _intcommand(lua_State *L) {
 	const char * parm = NULL;
 	char tmp[64];	// for integer parm
 	if (lua_gettop(L) == 2) {
+	  -- only different with _command is that the 2nd argument is integer if exist
+	  -- print the integer argument to string
 		int32_t n = (int32_t)luaL_checkinteger(L,2);
 		sprintf(tmp, "%d", n);
 		parm = tmp;
