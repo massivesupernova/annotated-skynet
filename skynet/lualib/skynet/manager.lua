@@ -2,8 +2,11 @@ local skynet = require "skynet"
 local c = require "skynet.core"
 
 function skynet.launch(...)
+  -- call to _command(L) with "LAUNCH" and "snlua launcher" for example
 	local addr = c.command("LAUNCH", table.concat({...}," "))
 	if addr then
+	  -- non-zero is fail, then return the service handle number
+	  -- string.sub(addr, 2) for example: "0x1234" => "1234"
 		return tonumber("0x" .. string.sub(addr , 2))
 	end
 end
