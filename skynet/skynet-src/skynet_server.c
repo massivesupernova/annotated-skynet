@@ -697,7 +697,7 @@ _filter_args(struct skynet_context * context, int type, int *session, void ** da
 	*sz |= (size_t)type << MESSAGE_TYPE_SHIFT;
 }
 
-int
+int // for example: (ctx, ctx->handle, des, type, nil, userdata:"LAUNCH snlua datacenterd", 3)
 skynet_send(struct skynet_context * context, uint32_t source, uint32_t destination , int type, int session, void * data, size_t sz) {
   // if sz is too large logging error and return
   if ((sz & MESSAGE_TYPE_MASK) != sz) {
@@ -708,29 +708,31 @@ skynet_send(struct skynet_context * context, uint32_t source, uint32_t destinati
 		return -1;
 	}
 
-  // 1. alloc new `session` if need alloc
-  // 2. copy message string of `data` if need to copy
+  // handle the arguments:
+  // 1. alloc new `session` if need alloc (type & PTYPE_ALLOCSESSION)
+  // 2. copy message string of `data` if need to copy (type has no PTYPE_NONCOPY)
   // 3. encode the type info (lower 8-bit) into the message size (`sz`, high 8-bit)
-  // 4. this message size: remote_message.sz or skynet_message.sz
+  // 4. this message size will be stored into as below: remote_message.sz or skynet_message.sz
 	_filter_args(context, type, &session, (void **)&data, &sz);
 
-  // if source is 0 then use context itself handle as source
+  // if source is 0 use service itself's handle as source
 	if (source == 0) {
 		source = context->handle;
 	}
 
-  // if destination is 0 just return
+  // destination handle cannot be 0
 	if (destination == 0) {
 		return session;
 	}
 
   // check destination handle is remote handle or not (high 8-bit is not 0 and not equal to HARBOR)
+  // and send the mssage to the REMOTE message queue or the destination service's message queue
 	if (skynet_harbor_message_isremote(destination)) {
 		struct remote_message * rmsg = skynet_malloc(sizeof(*rmsg));
 		rmsg->destination.handle = destination;
 		rmsg->message = data;
 		rmsg->sz = sz;
-    // construct a remote_message and push it into the REMOTE's message queue (REMOTE->queue)
+          // construct a remote_message and push it into the REMOTE's message queue (REMOTE->queue)
 		skynet_harbor_send(rmsg, source, session);
 	} else {
 		struct skynet_message smsg;
@@ -738,7 +740,7 @@ skynet_send(struct skynet_context * context, uint32_t source, uint32_t destinati
 		smsg.session = session;
 		smsg.data = data;
 		smsg.sz = sz;
-    // construct the message and push into the service's message queue (ctx->queue)
+          // construct the skynet_message and push into the service's message queue (ctx->queue)
 		if (skynet_context_push(destination, &smsg)) {
 			skynet_free(data);
 			return -1;
@@ -747,8 +749,9 @@ skynet_send(struct skynet_context * context, uint32_t source, uint32_t destinati
 	return session;
 }
 
-int
+int // (ctx, 0, ".launcher", PTYPE_LUA|ALLOCSESSION|DONTCOPY, nil, userdata:"LAUNCH snlua datacenterd", 3) for example
 skynet_sendname(struct skynet_context * context, uint32_t source, const char * addr , int type, int session, void * data, size_t sz) {
+  // if source is 0 use service itself's handle as source
 	if (source == 0) {
 		source = context->handle;
 	}
@@ -756,6 +759,9 @@ skynet_sendname(struct skynet_context * context, uint32_t source, const char * a
 	if (addr[0] == ':') {
 		des = strtoul(addr+1, NULL, 16);
 	} else if (addr[0] == '.') {
+	  // get the service handle from H->name[i] according to "launcher"
+	  // if got handle is 0 means fail then return -1 else use it as dest handle
+	  // and call to send for example: (ctx, ctx->handle, des, type, nil, userdata:"LAUNCH snlua datacenterd", 3)
 		des = skynet_handle_findname(addr + 1);
 		if (des == 0) {
 			if (type & PTYPE_TAG_DONTCOPY) {
