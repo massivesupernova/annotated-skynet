@@ -8,7 +8,7 @@
 - skynet.timeout(time, func) -> skynet_timeout(handle, time, session)
 - skynet.sleep(time) -> skynet_timeout(handle, time, session)
 
-```c
+```lua
 skynet_mq_push(queue, message)  
  <- skynet_context_push(handle, message)  
      <- skynet_error(ctx, msg, ...)  
@@ -24,7 +24,7 @@ skynet_mq_push(queue, message)
 
 ### Message Handling
 
-```c
+```lua
 bootstrap() -> skynet_context_dispatchall(ctx)
 thread_worker(para) -> skynet_context_message_dispatch(monitor, queue, weight)    
  -> ctx->cb(ctx, ctx->cb_ud, type, msg->session, msg->source, msg->data, sz)
