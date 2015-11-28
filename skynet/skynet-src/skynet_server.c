@@ -491,16 +491,23 @@ cmd_kill(struct skynet_context * context, const char * param) {
 
 static const char *
 cmd_launch(struct skynet_context * context, const char * param) {
+  // copy param to tmp and be pointed by args
 	size_t sz = strlen(param);
 	char tmp[sz+1];
 	strcpy(tmp,param);
 	char * args = tmp;
+  // get first word (module name) of args string to mod
 	char * mod = strsep(&args, " \t\r\n");
+  // args pointer to the remaining string
 	args = strsep(&args, "\r\n");
+  // create a new skynet_context with module name and its args
+  // <module>_create() and <module>_init() functions will be called to new a instance
 	struct skynet_context * inst = skynet_context_new(mod,args);
 	if (inst == NULL) {
 		return NULL;
 	} else {
+  // store the new context's handle to the external context's result array
+  // return this result string (hex integer string)
 		id_to_hex(context->result, inst->handle);
 		return context->result;
 	}
