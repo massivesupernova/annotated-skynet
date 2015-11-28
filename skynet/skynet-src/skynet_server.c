@@ -116,6 +116,13 @@ drop_message(struct skynet_message *msg, void *ud) {
 	skynet_send(NULL, source, msg->source, PTYPE_ERROR, 0, NULL, 0);
 }
 
+//1. load or reuse c dynamic module (ctx->mod)
+//2. create a new module instance (call <module>_create)
+//3. create a new skynet_context (ctx)
+//4. create and register a new handle (ctx->handle)
+//5. create a new message queue (ctx->quque)
+//6. initialise the instance (call <module>_init)
+//7. return the new created skynet_context
 struct skynet_context * 
 skynet_context_new(const char * name, const char *param) {
   // if the module is already loaded in the M then return it directly
