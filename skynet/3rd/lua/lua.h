@@ -1,5 +1,5 @@
 /*
-** $Id: lua.h,v 1.328 2015/06/03 13:03:38 roberto Exp $
+** $Id: lua.h,v 1.329 2015/11/13 17:18:42 roberto Exp $
 ** Lua - A Scripting Language
 ** Lua.org, PUC-Rio, Brazil (http://www.lua.org)
 ** See Copyright Notice at the end of this file
@@ -19,7 +19,7 @@
 #define LUA_VERSION_MAJOR	"5"
 #define LUA_VERSION_MINOR	"3"
 #define LUA_VERSION_NUM		503
-#define LUA_VERSION_RELEASE	"1"
+#define LUA_VERSION_RELEASE	"2"
 
 #define LUA_VERSION	"Lua " LUA_VERSION_MAJOR "." LUA_VERSION_MINOR
 #define LUA_RELEASE	LUA_VERSION "." LUA_VERSION_RELEASE
@@ -282,8 +282,6 @@ LUA_API int   (lua_load) (lua_State *L, lua_Reader reader, void *dt,
 
 LUA_API int (lua_dump) (lua_State *L, lua_Writer writer, void *data, int strip);
 
-LUA_API void (lua_clonefunction) (lua_State *L, const void *eL);
-
 
 /*
 ** coroutine functions
@@ -460,11 +458,6 @@ struct lua_Debug {
 
 /* }====================================================================== */
 
-/* Add by skynet */
-
-LUA_API lua_State * skynet_sig_L;
-LUA_API void (lua_checksig_)(lua_State *L);
-#define lua_checksig(L) if (skynet_sig_L) { lua_checksig_(L); }
 
 /******************************************************************************
 * Copyright (C) 1994-2015 Lua.org, PUC-Rio.

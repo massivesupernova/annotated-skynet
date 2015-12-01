@@ -1,5 +1,5 @@
 /*
-** $Id: lgc.c,v 2.205 2015/03/25 13:42:19 roberto Exp $
+** $Id: lgc.c,v 2.210 2015/11/03 18:10:44 roberto Exp $
 ** Garbage Collector
 ** See Copyright Notice in lua.h
 */
@@ -114,8 +114,13 @@ static void reallymarkobject (global_State *g, GCObject *o);
 
 
 /*
-** if key is not marked, mark its entry as dead (therefore removing it
-** from the table)
+** If key is not marked, mark its entry as dead. This allows key to be
+** collected, but keeps its entry in the table.  A dead node is needed
+** when Lua looks up for a key (it may be part of a chain) and when
+** traversing a weak table (key might be removed from the table during
+** traversal). Other places never manipulate dead keys, because its
+** associated nil value is enough to signal that the entry is logically
+** empty.
 */
 static void removeentry (Node *n) {
   lua_assert(ttisnil(gval(n)));
@@ -188,8 +193,7 @@ void luaC_upvalbarrier_ (lua_State *L, UpVal *uv) {
 
 void luaC_fix (lua_State *L, GCObject *o) {
   global_State *g = G(L);
-  if (g->allgc != o)
-	  return;  /* if object is not 1st in 'allgc' list, it is in global short string table */
+  lua_assert(g->allgc == o);  /* object must be 1st in 'allgc' list! */
   white2gray(o);  /* they will be gray forever */
   g->allgc = o->next;  /* remove object from 'allgc' list */
   o->next = g->fixedgc;  /* link it to 'fixedgc' list */
@@ -466,20 +470,6 @@ static lu_mem traversetable (global_State *g, Table *h) {
                          sizeof(Node) * cast(size_t, sizenode(h));
 }
 
-static int marksharedproto (global_State *g, SharedProto *f) {
-  int i;
-  if (g != f->l_G)
-    return 0;
-  markobjectN(g, f->source);
-  for (i = 0; i < f->sizeupvalues; i++)  /* mark upvalue names */
-    markobjectN(g, f->upvalues[i].name);
-  for (i = 0; i < f->sizelocvars; i++)  /* mark local-variable names */
-    markobjectN(g, f->locvars[i].varname);
-  return sizeof(Instruction) * f->sizecode +
-         sizeof(int) * f->sizelineinfo +
-         sizeof(LocVar) * f->sizelocvars +
-         sizeof(Upvaldesc) * f->sizeupvalues;
-}
 
 /*
 ** Traverse a prototype. (While a prototype is being build, its
@@ -490,13 +480,21 @@ static int traverseproto (global_State *g, Proto *f) {
   int i;
   if (f->cache && iswhite(f->cache))
     f->cache = NULL;  /* allow cache to be collected */
-  for (i = 0; i < f->sp->sizek; i++)  /* mark literals */
+  markobjectN(g, f->source);
+  for (i = 0; i < f->sizek; i++)  /* mark literals */
     markvalue(g, &f->k[i]);
-  for (i = 0; i < f->sp->sizep; i++)  /* mark nested protos */
+  for (i = 0; i < f->sizeupvalues; i++)  /* mark upvalue names */
+    markobjectN(g, f->upvalues[i].name);
+  for (i = 0; i < f->sizep; i++)  /* mark nested protos */
     markobjectN(g, f->p[i]);
-  return sizeof(Proto) + sizeof(Proto *) * f->sp->sizep +
-                         sizeof(TValue) * f->sp->sizek +
-                         marksharedproto(g, f->sp);
+  for (i = 0; i < f->sizelocvars; i++)  /* mark local-variable names */
+    markobjectN(g, f->locvars[i].varname);
+  return sizeof(Proto) + sizeof(Instruction) * f->sizecode +
+                         sizeof(Proto *) * f->sizep +
+                         sizeof(TValue) * f->sizek +
+                         sizeof(int) * f->sizelineinfo +
+                         sizeof(LocVar) * f->sizelocvars +
+                         sizeof(Upvaldesc) * f->sizeupvalues;
 }
 
 
@@ -549,7 +547,8 @@ static lu_mem traversethread (global_State *g, lua_State *th) {
   }
   else if (g->gckind != KGC_EMERGENCY)
     luaD_shrinkstack(th); /* do not change stack in emergency cycle */
-  return (sizeof(lua_State) + sizeof(TValue) * th->stacksize);
+  return (sizeof(lua_State) + sizeof(TValue) * th->stacksize +
+          sizeof(CallInfo) * th->nci);
 }
 
 
@@ -776,12 +775,11 @@ static GCObject **sweeptolive (lua_State *L, GCObject **p, int *n) {
 */
 
 /*
-** If possible, free concatenation buffer and shrink string table
+** If possible, shrink string table
 */
 static void checkSizes (lua_State *L, global_State *g) {
   if (g->gckind != KGC_EMERGENCY) {
     l_mem olddebt = g->GCdebt;
-    luaZ_freebuffer(L, &g->buff);  /* free concatenation buffer */
     if (g->strt.nuse < g->strt.size / 4)  /* string table too big? */
       luaS_resize(L, g->strt.size / 2);  /* shrink it a little */
     g->GCestimate += g->GCdebt - olddebt;  /* update estimate */
@@ -804,7 +802,7 @@ static GCObject *udata2finalize (global_State *g) {
 
 static void dothecall (lua_State *L, void *ud) {
   UNUSED(ud);
-  luaD_call(L, L->top - 2, 0, 0);
+  luaD_callnoyield(L, L->top - 2, 0);
 }
 
 
@@ -1121,9 +1119,12 @@ void luaC_runtilstate (lua_State *L, int statesmask) {
 static l_mem getdebt (global_State *g) {
   l_mem debt = g->GCdebt;
   int stepmul = g->gcstepmul;
-  debt = (debt / STEPMULADJ) + 1;
-  debt = (debt < MAX_LMEM / stepmul) ? debt * stepmul : MAX_LMEM;
-  return debt;
+  if (debt <= 0) return 0;  /* minimal debt */
+  else {
+    debt = (debt / STEPMULADJ) + 1;
+    debt = (debt < MAX_LMEM / stepmul) ? debt * stepmul : MAX_LMEM;
+    return debt;
+  }
 }
 
 /*

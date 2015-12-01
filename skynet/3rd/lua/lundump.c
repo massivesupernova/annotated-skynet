@@ -1,5 +1,5 @@
 /*
-** $Id: lundump.c,v 2.41 2014/11/02 19:19:04 roberto Exp $
+** $Id: lundump.c,v 2.44 2015/11/02 16:09:30 roberto Exp $
 ** load precompiled Lua chunks
 ** See Copyright Notice in lua.h
 */
@@ -32,7 +32,6 @@
 typedef struct {
   lua_State *L;
   ZIO *Z;
-  Mbuffer *b;
   const char *name;
 } LoadState;
 
@@ -92,15 +91,20 @@ static TString *LoadString (LoadState *S) {
     LoadVar(S, size);
   if (size == 0)
     return NULL;
-  else {
-    char *s = luaZ_openspace(S->L, S->b, --size);
-    LoadVector(S, s, size);
-    return luaS_newlstr(S->L, s, size);
+  else if (--size <= LUAI_MAXSHORTLEN) {  /* short string? */
+    char buff[LUAI_MAXSHORTLEN];
+    LoadVector(S, buff, size);
+    return luaS_newlstr(S->L, buff, size);
+  }
+  else {  /* long string */
+    TString *ts = luaS_createlngstrobj(S->L, size);
+    LoadVector(S, getstr(ts), size);  /* load directly in final place */
+    return ts;
   }
 }
 
 
-static void LoadCode (LoadState *S, SharedProto *f) {
+static void LoadCode (LoadState *S, Proto *f) {
   int n = LoadInt(S);
   f->code = luaM_newvector(S->L, n, Instruction);
   f->sizecode = n;
@@ -115,7 +119,7 @@ static void LoadConstants (LoadState *S, Proto *f) {
   int i;
   int n = LoadInt(S);
   f->k = luaM_newvector(S->L, n, TValue);
-  f->sp->sizek = n;
+  f->sizek = n;
   for (i = 0; i < n; i++)
     setnilvalue(&f->k[i]);
   for (i = 0; i < n; i++) {
@@ -149,17 +153,17 @@ static void LoadProtos (LoadState *S, Proto *f) {
   int i;
   int n = LoadInt(S);
   f->p = luaM_newvector(S->L, n, Proto *);
-  f->sp->sizep = n;
+  f->sizep = n;
   for (i = 0; i < n; i++)
     f->p[i] = NULL;
   for (i = 0; i < n; i++) {
-    f->p[i] = luaF_newproto(S->L, NULL);
-    LoadFunction(S, f->p[i], f->sp->source);
+    f->p[i] = luaF_newproto(S->L);
+    LoadFunction(S, f->p[i], f->source);
   }
 }
 
 
-static void LoadUpvalues (LoadState *S, SharedProto *f) {
+static void LoadUpvalues (LoadState *S, Proto *f) {
   int i, n;
   n = LoadInt(S);
   f->upvalues = luaM_newvector(S->L, n, Upvaldesc);
@@ -173,7 +177,7 @@ static void LoadUpvalues (LoadState *S, SharedProto *f) {
 }
 
 
-static void LoadDebug (LoadState *S, SharedProto *f) {
+static void LoadDebug (LoadState *S, Proto *f) {
   int i, n;
   n = LoadInt(S);
   f->lineinfo = luaM_newvector(S->L, n, int);
@@ -195,8 +199,7 @@ static void LoadDebug (LoadState *S, SharedProto *f) {
 }
 
 
-static void LoadFunction (LoadState *S, Proto *fp, TString *psource) {
-  SharedProto *f = fp->sp;
+static void LoadFunction (LoadState *S, Proto *f, TString *psource) {
   f->source = LoadString(S);
   if (f->source == NULL)  /* no source in dump? */
     f->source = psource;  /* reuse parent's source */
@@ -206,9 +209,9 @@ static void LoadFunction (LoadState *S, Proto *fp, TString *psource) {
   f->is_vararg = LoadByte(S);
   f->maxstacksize = LoadByte(S);
   LoadCode(S, f);
-  LoadConstants(S, fp);
+  LoadConstants(S, f);
   LoadUpvalues(S, f);
-  LoadProtos(S, fp);
+  LoadProtos(S, f);
   LoadDebug(S, f);
 }
 
@@ -252,8 +255,7 @@ static void checkHeader (LoadState *S) {
 /*
 ** load precompiled chunk
 */
-LClosure *luaU_undump(lua_State *L, ZIO *Z, Mbuffer *buff,
-                      const char *name) {
+LClosure *luaU_undump(lua_State *L, ZIO *Z, const char *name) {
   LoadState S;
   LClosure *cl;
   if (*name == '@' || *name == '=')
@@ -264,12 +266,11 @@ LClosure *luaU_undump(lua_State *L, ZIO *Z, Mbuffer *buff,
     S.name = name;
   S.L = L;
   S.Z = Z;
-  S.b = buff;
   checkHeader(&S);
   cl = luaF_newLclosure(L, LoadByte(&S));
   setclLvalue(L, L->top, cl);
-  incr_top(L);
-  cl->p = luaF_newproto(L, NULL);
+  luaD_inctop(L);
+  cl->p = luaF_newproto(L);
   LoadFunction(&S, cl->p, NULL);
   lua_assert(cl->nupvalues == cl->p->sizeupvalues);
   luai_verifycode(L, buff, cl->p);

@@ -1,5 +1,5 @@
 /*
-** $Id: lauxlib.c,v 1.280 2015/02/03 17:38:24 roberto Exp $
+** $Id: lauxlib.c,v 1.284 2015/11/19 19:16:22 roberto Exp $
 ** Auxiliary functions for building Lua libraries
 ** See Copyright Notice in lua.h
 */
@@ -33,8 +33,8 @@
 */
 
 
-#define LEVELS1	12	/* size of the first part of the stack */
-#define LEVELS2	10	/* size of the second part of the stack */
+#define LEVELS1	10	/* size of the first part of the stack */
+#define LEVELS2	11	/* size of the second part of the stack */
 
 
 
@@ -107,7 +107,7 @@ static void pushfuncname (lua_State *L, lua_Debug *ar) {
 }
 
 
-static int countlevels (lua_State *L) {
+static int lastlevel (lua_State *L) {
   lua_Debug ar;
   int li = 1, le = 1;
   /* find an upper bound */
@@ -126,14 +126,16 @@ LUALIB_API void luaL_traceback (lua_State *L, lua_State *L1,
                                 const char *msg, int level) {
   lua_Debug ar;
   int top = lua_gettop(L);
-  int numlevels = countlevels(L1);
-  int mark = (numlevels > LEVELS1 + LEVELS2) ? LEVELS1 : 0;
-  if (msg) lua_pushfstring(L, "%s\n", msg);
+  int last = lastlevel(L1);
+  int n1 = (last - level > LEVELS1 + LEVELS2) ? LEVELS1 : -1;
+  if (msg)
+    lua_pushfstring(L, "%s\n", msg);
+  luaL_checkstack(L, 10, NULL);
   lua_pushliteral(L, "stack traceback:");
   while (lua_getstack(L1, level++, &ar)) {
-    if (level == mark) {  /* too many levels? */
+    if (n1-- == 0) {  /* too many levels? */
       lua_pushliteral(L, "\n\t...");  /* add a '...' */
-      level = numlevels - LEVELS2;  /* and skip to last ones */
+      level = last - LEVELS2 + 1;  /* and skip to last ones */
     }
     else {
       lua_getinfo(L1, "Slnt", &ar);
@@ -289,7 +291,7 @@ LUALIB_API int luaL_newmetatable (lua_State *L, const char *tname) {
   if (luaL_getmetatable(L, tname) != LUA_TNIL)  /* name already in use? */
     return 0;  /* leave previous value on top, but return 0 */
   lua_pop(L, 1);
-  lua_newtable(L);  /* create metatable */
+  lua_createtable(L, 0, 2);  /* create metatable */
   lua_pushstring(L, tname);
   lua_setfield(L, -2, "__name");  /* metatable.__name = tname */
   lua_pushvalue(L, -1);
@@ -435,6 +437,47 @@ LUALIB_API lua_Integer luaL_optinteger (lua_State *L, int arg,
 ** =======================================================
 */
 
+/* userdata to box arbitrary data */
+typedef struct UBox {
+  void *box;
+  size_t bsize;
+} UBox;
+
+
+static void *resizebox (lua_State *L, int idx, size_t newsize) {
+  void *ud;
+  lua_Alloc allocf = lua_getallocf(L, &ud);
+  UBox *box = (UBox *)lua_touserdata(L, idx);
+  void *temp = allocf(ud, box->box, box->bsize, newsize);
+  if (temp == NULL && newsize > 0) {  /* allocation error? */
+    resizebox(L, idx, 0);  /* free buffer */
+    luaL_error(L, "not enough memory for buffer allocation");
+  }
+  box->box = temp;
+  box->bsize = newsize;
+  return temp;
+}
+
+
+static int boxgc (lua_State *L) {
+  resizebox(L, 1, 0);
+  return 0;
+}
+
+
+static void *newbox (lua_State *L, size_t newsize) {
+  UBox *box = (UBox *)lua_newuserdata(L, sizeof(UBox));
+  box->box = NULL;
+  box->bsize = 0;
+  if (luaL_newmetatable(L, "LUABOX")) {  /* creating metatable? */
+    lua_pushcfunction(L, boxgc);
+    lua_setfield(L, -2, "__gc");  /* metatable.__gc = boxgc */
+  }
+  lua_setmetatable(L, -2);
+  return resizebox(L, -1, newsize);
+}
+
+
 /*
 ** check whether buffer is using a userdata on the stack as a temporary
 ** buffer
@@ -455,11 +498,12 @@ LUALIB_API char *luaL_prepbuffsize (luaL_Buffer *B, size_t sz) {
     if (newsize < B->n || newsize - B->n < sz)
       luaL_error(L, "buffer too large");
     /* create larger buffer */
-    newbuff = (char *)lua_newuserdata(L, newsize * sizeof(char));
-    /* move content to new buffer */
-    memcpy(newbuff, B->b, B->n * sizeof(char));
     if (buffonstack(B))
-      lua_remove(L, -2);  /* remove old buffer */
+      newbuff = (char *)resizebox(L, -1, newsize);
+    else {  /* no buffer yet */
+      newbuff = (char *)newbox(L, newsize);
+      memcpy(newbuff, B->b, B->n * sizeof(char));  /* copy original content */
+    }
     B->b = newbuff;
     B->size = newsize;
   }
@@ -468,9 +512,11 @@ LUALIB_API char *luaL_prepbuffsize (luaL_Buffer *B, size_t sz) {
 
 
 LUALIB_API void luaL_addlstring (luaL_Buffer *B, const char *s, size_t l) {
-  char *b = luaL_prepbuffsize(B, l);
-  memcpy(b, s, l * sizeof(char));
-  luaL_addsize(B, l);
+  if (l > 0) {  /* avoid 'memcpy' when 's' can be NULL */
+    char *b = luaL_prepbuffsize(B, l);
+    memcpy(b, s, l * sizeof(char));
+    luaL_addsize(B, l);
+  }
 }
 
 
@@ -482,8 +528,10 @@ LUALIB_API void luaL_addstring (luaL_Buffer *B, const char *s) {
 LUALIB_API void luaL_pushresult (luaL_Buffer *B) {
   lua_State *L = B->L;
   lua_pushlstring(L, B->b, B->n);
-  if (buffonstack(B))
-    lua_remove(L, -2);  /* remove old buffer */
+  if (buffonstack(B)) {
+    resizebox(L, -2, 0);  /* delete old buffer */
+    lua_remove(L, -2);  /* remove its header from the stack */
+  }
 }
 
 
@@ -605,7 +653,7 @@ static int errfile (lua_State *L, const char *what, int fnameindex) {
 
 
 static int skipBOM (LoadF *lf) {
-  const char *p = "\xEF\xBB\xBF";  /* Utf8 BOM mark */
+  const char *p = "\xEF\xBB\xBF";  /* UTF-8 BOM mark */
   int c;
   lf->n = 0;
   do {
@@ -638,7 +686,7 @@ static int skipcomment (LoadF *lf, int *cp) {
 }
 
 
-static int luaL_loadfilex_ (lua_State *L, const char *filename,
+LUALIB_API int luaL_loadfilex (lua_State *L, const char *filename,
                                              const char *mode) {
   LoadF lf;
   int status, readstatus;
@@ -970,172 +1018,3 @@ LUALIB_API void luaL_checkversion_ (lua_State *L, lua_Number ver, size_t sz) {
                   ver, *v);
 }
 
-// use clonefunction
-
-#include "spinlock.h"
-
-struct codecache {
-	struct spinlock lock;
-	lua_State *L;
-};
-
-static struct codecache CC;
-
-static void
-clearcache() {
-	if (CC.L == NULL)
-		return;
-	SPIN_LOCK(&CC)
-		lua_close(CC.L);
-		CC.L = luaL_newstate();
-	SPIN_UNLOCK(&CC)
-}
-
-static void
-init() {
-	SPIN_INIT(&CC);
-	CC.L = luaL_newstate();
-}
-
-static const void *
-load(const char *key) {
-  if (CC.L == NULL)
-    return NULL;
-  SPIN_LOCK(&CC)
-    lua_State *L = CC.L;
-    lua_pushstring(L, key);
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    const void * result = lua_touserdata(L, -1);
-    lua_pop(L, 1);
-  SPIN_UNLOCK(&CC)
-
-  return result;
-}
-
-static const void *
-save(const char *key, const void * proto) {
-  lua_State *L;
-  const void * result = NULL;
-
-  SPIN_LOCK(&CC)
-    if (CC.L == NULL) {
-      init();
-      L = CC.L;
-    } else {
-      L = CC.L;
-      lua_pushstring(L, key);
-      lua_pushvalue(L, -1);
-      lua_rawget(L, LUA_REGISTRYINDEX);
-      result = lua_touserdata(L, -1); /* stack: key oldvalue */
-      if (result == NULL) {
-        lua_pop(L,1);
-        lua_pushlightuserdata(L, (void *)proto);
-        lua_rawset(L, LUA_REGISTRYINDEX);
-      } else {
-        lua_pop(L,2);
-      }
-    }
-  SPIN_UNLOCK(&CC)
-  return result;
-}
-
-#define CACHE_OFF 0
-#define CACHE_EXIST 1
-#define CACHE_ON 2
-
-static int cache_key = 0;
-
-static int cache_level(lua_State *L) {
-	int t = lua_rawgetp(L, LUA_REGISTRYINDEX, &cache_key);
-	int r = lua_tointeger(L, -1);
-	lua_pop(L,1);
-	if (t == LUA_TNUMBER) {
-		return r;
-	}
-	return CACHE_ON;
-}
-
-static int cache_mode(lua_State *L) {
-	static const char * lst[] = {
-		"OFF",
-		"EXIST",
-		"ON",
-		NULL,
-	};
-	if (lua_isnoneornil(L,1)) {
-		int t = lua_rawgetp(L, LUA_REGISTRYINDEX, &cache_key);
-		int r = lua_tointeger(L, -1);
-		if (t == LUA_TNUMBER) {
-			if (r < 0  || r >= CACHE_ON) {
-				r = CACHE_ON;
-			}
-		} else {
-			r = CACHE_ON;
-		}
-		lua_pushstring(L, lst[r]);
-		return 1;
-	}
-	int t = luaL_checkoption(L, 1, "OFF" , lst);
-	lua_pushinteger(L, t);
-	lua_rawsetp(L, LUA_REGISTRYINDEX, &cache_key);
-	return 0;
-}
-
-LUALIB_API int luaL_loadfilex (lua_State *L, const char *filename,
-                                             const char *mode) {
-  int level = cache_level(L);
-  if (level == CACHE_OFF) {
-    return luaL_loadfilex_(L, filename, mode);
-  }
-  const void * proto = load(filename);
-  if (proto) {
-    lua_clonefunction(L, proto);
-    return LUA_OK;
-  }
-  if (level == CACHE_EXIST) {
-    return luaL_loadfilex_(L, filename, mode);
-  }
-  lua_State * eL = luaL_newstate();
-  if (eL == NULL) {
-    lua_pushliteral(L, "New state failed");
-    return LUA_ERRMEM;
-  }
-  int err = luaL_loadfilex_(eL, filename, mode);
-  if (err != LUA_OK) {
-    size_t sz = 0;
-    const char * msg = lua_tolstring(eL, -1, &sz);
-    lua_pushlstring(L, msg, sz);
-    lua_close(eL);
-    return err;
-  }
-  proto = lua_topointer(eL, -1);
-  const void * oldv = save(filename, proto);
-  if (oldv) {
-    lua_close(eL);
-    lua_clonefunction(L, oldv);
-  } else {
-    lua_clonefunction(L, proto);
-    /* Never close it. notice: memory leak */
-  }
-
-  return LUA_OK;
-}
-
-static int
-cache_clear(lua_State *L) {
-	(void)(L);
-	clearcache();
-	return 0;
-}
-
-LUAMOD_API int luaopen_cache(lua_State *L) {
-	luaL_Reg l[] = {
-		{ "clear", cache_clear },
-		{ "mode", cache_mode },
-		{ NULL, NULL },
-	};
-	luaL_newlib(L,l);
-	lua_getglobal(L, "loadfile");
-	lua_setfield(L, -2, "loadfile");
-	return 1;
-}
